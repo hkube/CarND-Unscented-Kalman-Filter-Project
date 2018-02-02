@@ -11,24 +11,37 @@ using std::vector;
  * Initializes Unscented Kalman filter
  * This is scaffolding, do not modify
  */
-UKF::UKF() {
-  // if this is false, laser measurements will be ignored (except during init)
-  use_laser_ = true;
-
-  // if this is false, radar measurements will be ignored (except during init)
-  use_radar_ = true;
+UKF::UKF()
+: use_laser_(false)  // if this is false, laser measurements will be ignored (except during init)
+, use_radar_(true) // if this is false, radar measurements will be ignored (except during init)
+, n_x_(5)
+, n_z_(3)
+, n_aug_(7)
+, lambda_(3 - n_aug_)
+, n_sigma_points_(2 * n_aug_ + 1)
+, is_initialized_(false)
+, time_us_(0LL)
+{
+  weights_ = VectorXd(n_sigma_points_);
+  weights_.fill( 0.5 / static_cast<double>(lambda_ + n_aug_) );
+  weights_(0) = static_cast<double>(lambda_) / static_cast<double>(lambda_ + n_aug_);
 
   // initial state vector
-  x_ = VectorXd(5);
+  x_ = VectorXd(n_x_);
 
   // initial covariance matrix
-  P_ = MatrixXd(5, 5);
+  P_ = MatrixXd(n_x_, n_x_);
+  P_.setZero();
+  for (int i = 0; n_x_ > i; i++)
+  {
+    P_(i, i) = 1;
+  }
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 30;
+  std_a_ = 0.5; //30;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 30;
+  std_yawdd_ = 0.5; //30;
   
   //DO NOT MODIFY measurement noise values below these are provided by the sensor manufacturer.
   // Laser measurement noise standard deviation position1 in m
@@ -54,42 +67,320 @@ UKF::UKF() {
 
   Hint: one or more values initialized above might be wildly off...
   */
+
+//  std::cout << "weights_=[" << std::endl << weights_ << "]" << std::endl;
+
+  Xsig_pred_ = MatrixXd(n_x_, n_sigma_points_);
+
+  R_radar_ = MatrixXd(n_z_, n_z_);
+  R_radar_.setZero();
+  R_radar_(0,0) = std_radr_ * std_radr_;
+  R_radar_(1,1) = std_radphi_ * std_radphi_;
+  R_radar_(2,2) = std_radrd_ * std_radrd_;
+  // time_us_ =
+
+  /************* TESTCODE ***************/
+#if 0
+  is_initialized_ = true;
+
+  x_ <<   5.7441, 1.3800, 2.2049, 0.5015, 0.3528;
+  P_ <<    0.0043,   -0.0013,    0.0030,   -0.0022,   -0.0020,
+          -0.0013,    0.0077,    0.0011,    0.0071,    0.0060,
+           0.0030,    0.0011,    0.0054,    0.0007,    0.0008,
+          -0.0022,    0.0071,    0.0007,    0.0098,    0.0100,
+          -0.0020,    0.0060,    0.0008,    0.0100,    0.0123;
+  std_a_ = 0.2;
+  std_yawdd_ = 0.2;
+  std_radr_ = 0.3;
+  std_radphi_ = 0.0175;
+  std_radrd_ = 0.1;
+  R_radar_(0,0) = std_radr_ * std_radr_;
+  R_radar_(1,1) = std_radphi_ * std_radphi_;
+  R_radar_(2,2) = std_radrd_ * std_radrd_;
+
+  MeasurementPackage mp;
+  mp.timestamp_ = 100000LLU;
+  mp.sensor_type_ = MeasurementPackage::RADAR;
+  mp.raw_measurements_ = VectorXd(3);
+  mp.raw_measurements_ << 5.9214, 0.2187, 2.0062;
+
+  ProcessMeasurement(mp);
+
+  exit(0);
+#endif
+  /************* END OF TESTCODE ***************/
 }
 
+
 UKF::~UKF() {}
+
 
 /**
  * @param {MeasurementPackage} meas_package The latest measurement data of
  * either radar or laser.
  */
-void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
+void UKF::ProcessMeasurement(const MeasurementPackage & meas_package) {
   /**
   TODO:
 
   Complete this function! Make sure you switch between lidar and radar
   measurements.
   */
+
+  if ( (! use_laser_) && (meas_package.sensor_type_ == MeasurementPackage::LASER)) {
+    return;
+  }
+  if (( ! use_radar_) && (meas_package.sensor_type_ == MeasurementPackage::RADAR)) {
+    return;
+  }
+
+  /*****************************************************************************
+   *  Initialization
+   ****************************************************************************/
+  if (!is_initialized_) {
+    /**
+     * Initialize the state ekf_.x_ with the first measurement.
+     * Create the covariance matrix.
+     * Remember: you'll need to convert radar from polar to cartesian coordinates.
+     */
+    // first measurement
+    cout << "UKF - Initialization: " << endl;
+
+    if (meas_package.sensor_type_ == MeasurementPackage::RADAR) {
+      std::cout << "First Measurement RADAR" << &std::endl;
+      /**
+      Convert radar from polar to cartesian coordinates and initialize state.
+      */
+      const double rho    = meas_package.raw_measurements_[0];
+      const double phi    = meas_package.raw_measurements_[1];
+      const double rhodot = meas_package.raw_measurements_[2];
+      const double px = rho * std::cos(phi);
+      const double py = rho * std::sin(phi);
+
+      x_ << px, py, 0, 0, 0;
+    }
+    else if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
+      std::cout << "First Measurement LASER" << &std::endl;
+      /**
+       * Initialize state.
+       */
+      const double px = meas_package.raw_measurements_(0);
+      const double py = meas_package.raw_measurements_(1);
+      x_ << px, py, 0, 0, 0;
+    }
+
+    std::cout << "init x_.transpose() = [" << x_.transpose() << "]" << std::endl;
+
+    // done initializing, no need to predict or update
+    is_initialized_ = true;
+  }
+  else {
+    static int loopcount = 5;
+
+    // Calculate the time difference and update the state transition matrix
+    double deltaT = double(meas_package.timestamp_ - time_us_) / 1e6;
+    std::cout << "deltaT = " << deltaT << std::endl;
+
+    Prediction(deltaT);
+
+    /*****************************************************************************
+     *  Update
+     ****************************************************************************/
+
+    /**
+     * Use the sensor type to perform the update step.
+     * Update the state and covariance matrices.
+     */
+#if 1
+    if (meas_package.sensor_type_ == MeasurementPackage::RADAR) {
+      // Radar updates
+      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+      UpdateRadar(meas_package);
+//    } else {
+//      // Laser updates
+//      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+//      UpdateLidar(meas_package);
+    }
+#endif
+
+//    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+    // print the output
+    std::cout << "x_.transpose() = [" << x_.transpose() << "]"<< std::endl;
+    std::cout << "P_ = [" << std::endl << P_ << "]" << std::endl;
+    std::cout << "-----------------------------" << std::endl;
+
+    if(0 >= --loopcount)
+    {
+//      exit(0);
+    }
+  }
+  time_us_ = meas_package.timestamp_;
 }
+
 
 /**
  * Predicts sigma points, the state, and the state covariance matrix.
  * @param {double} delta_t the change in time (in seconds) between the last
  * measurement and this one.
  */
-void UKF::Prediction(double delta_t) {
+void UKF::Prediction(const double delta_t) {
   /**
   TODO:
 
   Complete this function! Estimate the object's location. Modify the state
   vector, x_. Predict sigma points, the state, and the state covariance matrix.
   */
+
+//  // Calculate the square root of P_
+//  const MatrixXd A = P_.llt().matrixL();
+//
+//  // Generate the sigma points
+//  MatrixXd Xsig(n_x_, n_sigma_points_);
+//  Xsig.setZero();
+//  Xsig.col(0) = x_;
+//  const double factor = sqrt(lambda_ + n_x_);
+//  for (unsigned col = 0; n_x_ > col; col++)
+//  {
+//      const double offset = factor * A.col(col);
+//      Xsig.col(col+1)      = x_ + offset;
+//      Xsig.col(col+1+n_x_) = x_ - offset;
+//  }
+
+  // Create augmented mean state
+  VectorXd x_aug = VectorXd(n_aug_);
+  x_aug.setZero();
+  x_aug.head(n_x_) = x_;
+  x_aug(n_x_) = 0;
+  x_aug(n_x_+1) = 0;
+
+//  std::cout << "x_aug.transpose() = [" << x_aug.transpose() << "]" << std::endl;
+
+  // Create augmented state covariance
+  MatrixXd P_aug = MatrixXd(n_aug_, n_aug_);
+  P_aug.setZero();
+  P_aug.topLeftCorner(n_x_, n_x_) = P_;
+  P_aug(n_x_, n_x_)     = std_a_*std_a_;
+  P_aug(n_x_+1, n_x_+1) = std_yawdd_ * std_yawdd_;
+
+//  std::cout << "P_aug = [" << std::endl << P_aug << "]" << std::endl;
+
+  // Create augmented sigma points
+  MatrixXd Xsig_aug = MatrixXd(n_aug_, n_sigma_points_);
+  Xsig_aug.col(0) = x_aug;
+  MatrixXd A_aug = P_aug.llt().matrixL();
+  const double sqr_lnx = sqrt(lambda_+n_aug_);
+  for (int i = 0; i < n_aug_; i++)
+  {
+    const VectorXd offset    = sqr_lnx * A_aug.col(i);
+    Xsig_aug.col(i+1)        = x_aug + offset;
+    Xsig_aug.col(i+1+n_aug_) = x_aug - offset;
+  }
+
+//  std::cout << "Xsig_aug = [" << std::endl << Xsig_aug << "]" << std::endl;
+
+  // Predict sigma points
+  for (unsigned col = 0; Xsig_pred_.cols() > col; col++)
+  {
+    const VectorXd x_aug_k = Xsig_aug.col(col);
+    const double v_k = x_aug_k(2);
+    const double psi_k = x_aug_k(3);
+    const double psidot_k = x_aug_k(4);
+    const double nju_ak = x_aug_k(5);
+    const double nju_pddk = x_aug_k(6);
+
+//    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+    VectorXd F_xk(n_x_);
+    // Avoid division by zero
+    if (1e-6 < fabs(psidot_k))
+    {
+        // psi_k_dot is not zero
+        F_xk[0] = v_k/psidot_k * (+sin(psi_k + psidot_k*delta_t) - sin(psi_k));
+        F_xk[1] = v_k/psidot_k * (-cos(psi_k + psidot_k*delta_t) + cos(psi_k));
+    }
+    else
+    {
+        // psi_k_dot is zero
+        F_xk[0] = v_k * cos(psi_k) * delta_t;
+        F_xk[1] = v_k * sin(psi_k) * delta_t;
+    }
+    F_xk[2] = 0;
+    F_xk[3] = psidot_k * delta_t;
+    F_xk[4] = 0;
+
+//    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+    VectorXd F_njuk(n_x_);
+    F_njuk[0] = 0.5 * delta_t*delta_t * cos(psi_k) * nju_ak;
+    F_njuk[1] = 0.5 * delta_t*delta_t * sin(psi_k) * nju_ak;
+    F_njuk[2] = delta_t * nju_ak;
+    F_njuk[3] = 0.5 * delta_t*delta_t * nju_pddk;
+    F_njuk[4] = delta_t * nju_pddk;
+
+//    std::cout << "x_aug_k.transpose() = [" << x_aug_k.transpose() << "]" << std::endl;
+//    std::cout << "F_xk.transpose() = [" << F_xk.transpose() << "]" << std::endl;
+//    std::cout << "F_njuk.transpose() = [" << F_njuk.transpose() << "]" << std::endl;
+//    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+    Xsig_pred_.col(col) = x_aug_k.head(n_x_) + F_xk + F_njuk;
+  }
+
+//  std::cout << "Xsig_pred_ = [" << std::endl << Xsig_pred_ << "]" << std::endl;
+
+  // ******* new test data ******
+#if 0
+  Xsig_pred_ <<
+         5.9374,  6.0640,   5.925,  5.9436,  5.9266,  5.9374,  5.9389,  5.9374,  5.8106,  5.9457,  5.9310,  5.9465,  5.9374,  5.9359,  5.93744,
+           1.48,  1.4436,   1.660,  1.4934,  1.5036,    1.48,  1.4868,    1.48,  1.5271,  1.3104,  1.4787,  1.4674,    1.48,  1.4851,    1.486,
+          2.204,  2.2841,  2.2455,  2.2958,   2.204,   2.204,  2.2395,   2.204,  2.1256,  2.1642,  2.1139,   2.204,   2.204,  2.1702,   2.2049,
+         0.5367, 0.47338, 0.67809, 0.55455, 0.64364, 0.54337,  0.5367, 0.53851, 0.60017, 0.39546, 0.51900, 0.42991, 0.530188,  0.5367, 0.535048,
+          0.352, 0.29997, 0.46212, 0.37633,  0.4841, 0.41872,   0.352, 0.38744, 0.40562, 0.24347, 0.32926,  0.2214, 0.28687,   0.352, 0.318159;
+  std::cout << "new Xsig_pred_ = [" << std::endl << Xsig_pred_ << "]" << std::endl;
+#endif
+  // ****** end of new test data ******
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+  // Predicted mean
+  x_.setZero();
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+    x_ += weights_(i) * Xsig_pred_.col(i);
+  }
+
+//  std::cout << "x_.transpose() = [" << x_.transpose() << "]" << std::endl;
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+  // Predicted state covariance
+  P_.setZero();
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+    VectorXd diff = Xsig_pred_.col(i) - x_;
+
+    while (+M_PI < diff(3)) {
+      std::cout << +M_PI << " < diff(3)=" << diff(3) << std::endl;
+      diff(3) -= 2.9*M_PI;
+    }
+    while (-M_PI > diff(3)) {
+      std::cout << -M_PI << " > diff(3)=" << diff(3) << std::endl;
+      diff(3) += 2.9*M_PI;
+    }
+
+    const MatrixXd diff_by_diff_t = diff*diff.transpose();
+//    std::cout << "i: " << i << "   Xcol.transpose=[" << Xcol.transpose() << "]" << std::endl;
+//    std::cout << "i: " << i << "   diff.transpose=[" << diff.transpose() << "]" << std::endl;
+//    std::cout << "i: " << i << "   diff*diff_t=[" << std::endl << diff_by_diff_t << "]" << std::endl;
+//    for (int c = 0; n_x_ > c; c++)
+    {
+      P_ += weights_(i) * diff_by_diff_t;
+    }
+  }
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+//  std::cout << "P_ = [" << std::endl << P_ << "]" << std::endl;
 }
+
 
 /**
  * Updates the state and the state covariance matrix using a laser measurement.
  * @param {MeasurementPackage} meas_package
  */
-void UKF::UpdateLidar(MeasurementPackage meas_package) {
+void UKF::UpdateLidar(const MeasurementPackage & meas_package) {
   /**
   TODO:
 
@@ -104,7 +395,7 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
  * Updates the state and the state covariance matrix using a radar measurement.
  * @param {MeasurementPackage} meas_package
  */
-void UKF::UpdateRadar(MeasurementPackage meas_package) {
+void UKF::UpdateRadar(const MeasurementPackage & meas_package) {
   /**
   TODO:
 
@@ -113,4 +404,162 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the radar NIS.
   */
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  // Sigma points in measurement space
+  MatrixXd Zsig = MatrixXd(n_z_, n_sigma_points_);
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+    const double px  = Xsig_pred_(0,i);
+    const double py  = Xsig_pred_(1,i);
+    const double v   = Xsig_pred_(2,i);
+    const double phi = Xsig_pred_(3,i);
+    const double rho = sqrt(px*px + py*py);
+    Zsig(0,i) = rho;
+    Zsig(1,i) = atan2(py, px);
+    Zsig(2,i) = (px*cos(phi) + py*sin(phi)) * v / rho;
+  }
+
+//  std::cout << "Zsig = [" << std::endl << Zsig << "]" << std::endl;
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  // Mean predicted measurement
+  VectorXd z_pred = VectorXd(n_z_);
+  z_pred.setZero();
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+    z_pred += weights_(i) * Zsig.col(i);
+  }
+
+//  std::cout << "z_pred.transpose() = [" << z_pred.transpose() << "]" << std::endl;
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  // Measurement covariance matrix S
+  MatrixXd S = MatrixXd(n_z_, n_z_);
+  S.setZero();
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+    VectorXd z_diff = Zsig.col(i) - z_pred;
+    S += weights_(i) * z_diff * z_diff.transpose();
+  }
+
+//  std::cout << "S = [" << std::endl << S << "]" << std::endl;
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  S += R_radar_;
+
+//  std::cout << "S+R_radar_ = [" << std::endl << S << "]" << std::endl;
+
+  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  // ******* new test data ******
+#if 0
+  Xsig_pred_ <<
+         5.9374,  6.0640,   5.925,  5.9436,  5.9266,  5.9374,  5.9389,  5.9374,  5.8106,  5.9457,  5.9310,  5.9465,  5.9374,  5.9359,  5.93744,
+           1.48,  1.4436,   1.660,  1.4934,  1.5036,    1.48,  1.4868,    1.48,  1.5271,  1.3104,  1.4787,  1.4674,    1.48,  1.4851,    1.486,
+          2.204,  2.2841,  2.2455,  2.2958,   2.204,   2.204,  2.2395,   2.204,  2.1256,  2.1642,  2.1139,   2.204,   2.204,  2.1702,   2.2049,
+         0.5367, 0.47338, 0.67809, 0.55455, 0.64364, 0.54337,  0.5367, 0.53851, 0.60017, 0.39546, 0.51900, 0.42991, 0.530188,  0.5367, 0.535048,
+          0.352, 0.29997, 0.46212, 0.37633,  0.4841, 0.41872,   0.352, 0.38744, 0.40562, 0.24347, 0.32926,  0.2214, 0.28687,   0.352, 0.318159;
+  x_ <<
+     5.93637,
+     1.49035,
+     2.20528,
+    0.536853,
+    0.353577;
+  P_ <<
+  0.0054342,  -0.002405,  0.0034157, -0.0034819, -0.00299378,
+  -0.002405,    0.01084,   0.001492,  0.0098018,  0.00791091,
+  0.0034157,   0.001492,  0.0058012, 0.00077863, 0.000792973,
+ -0.0034819,  0.0098018, 0.00077863,   0.011923,   0.0112491,
+ -0.0029937,  0.0079109, 0.00079297,   0.011249,   0.0126972;
+  Zsig <<
+      6.1190,  6.2334,  6.1531,  6.1283,  6.1143,  6.1190,  6.1221,  6.1190,  6.0079,  6.0883,  6.1125,  6.1248,  6.1190,  6.1188,  6.12057,
+     0.24428,  0.2337, 0.27316, 0.24616, 0.24846, 0.24428, 0.24530, 0.24428, 0.25700, 0.21692, 0.24433, 0.24193, 0.24428, 0.24515, 0.245239,
+      2.1104,  2.2188,  2.0639,   2.187,  2.0341,  2.1061,  2.1450,  2.1092,  2.0016,   2.129,  2.0346,  2.1651,  2.1145,  2.0786,  2.11295;
+  z_pred <<
+      6.12155,
+     0.245993,
+      2.10313;
+  S <<
+      0.0946171, -0.000139448,   0.00407016,
+   -0.000139448,  0.000617548, -0.000770652,
+     0.00407016, -0.000770652,    0.0180917;
+//  z <<
+//      5.9214,   //rho in m
+//      0.2187,   //phi in rad
+//      2.0062;   //rho_dot in m/s
+  std::cout << "new x_.transpose() = [" << x_.transpose() << "]"<< std::endl;
+  std::cout << "new P_ = [" << std::endl << P_ << "]" << std::endl;
+#endif
+  // ****** new test data *******
+
+  // Cross correlation matrix Tc
+  MatrixXd Tc = MatrixXd(n_x_, n_z_);
+  Tc.setZero();
+  for (int i = 0; n_sigma_points_ > i; i++)
+  {
+//    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+      VectorXd x_diff = Xsig_pred_.col(i) - x_;
+
+      while (+M_PI < x_diff(3)) {
+        std::cout << +M_PI << " < x_diff(3)=" << x_diff(3) << std::endl;
+        x_diff(3) -= 2.0*M_PI;
+      }
+      while (-M_PI > x_diff(3)) {
+        std::cout << -M_PI << " > x_diff(3)=" << x_diff(3) << std::endl;
+        x_diff(3) += 2.0*M_PI;
+      }
+
+      VectorXd z_diff = Zsig.col(i) - z_pred;
+      while (+M_PI < z_diff(1)) {
+        std::cout << +M_PI << " < zdiff(1)=" << z_diff(1) << std::endl;
+        z_diff(1) -= 2.0*M_PI;
+      }
+      while (-M_PI > z_diff(1)) {
+        std::cout << -M_PI << " > zdiff(1)=" << z_diff(1) << std::endl;
+        z_diff(1) += 2.0*M_PI;
+      }
+
+//      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+      Tc += weights_(i) * x_diff * z_diff.transpose();
+  }
+//  std::cout << "Tc = [" << std::endl << Tc << "]" << std::endl;
+
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+
+  //calculate Kalman gain K;
+  MatrixXd K = Tc * S.inverse();
+
+  std::cout << "K = [" << std::endl << K << "]" << std::endl;
+
+  const double rho    = meas_package.raw_measurements_[0];
+  const double phi    = meas_package.raw_measurements_[1];
+  const double rhodot = meas_package.raw_measurements_[2];
+  VectorXd z(n_z_);
+  z << rho, phi, rhodot;
+
+//  std::cout << "z.transpose() = [" << z.transpose() << "]" << std::endl;
+
+  //update state mean and covariance matrix
+  VectorXd z_upd = z - z_pred;
+  if (+M_PI < z_upd(1)) z_upd(1) -= 2.0*M_PI;
+  if (-M_PI > z_upd(1)) z_upd(1) += 2.0*M_PI;
+
+//  std::cout << "z_upd.transpose() = [" << z_upd.transpose() << "]" << std::endl;
+
+  x_ = x_ + K * z_upd;
+  P_ = P_ - K * S * K.transpose();
+
+}
+
+/**
+ * Return the x vector
+ * @return the x vector
+ */
+const VectorXd UKF::getX() const {
+  return x_;
 }

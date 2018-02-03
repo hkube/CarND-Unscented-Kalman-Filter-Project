@@ -123,6 +123,24 @@ private:
   ///* Lidar measurement matrix
   MatrixXd H_;
 
+  ///* Number of radar data sets
+  int num_of_radar_data_;
+
+  ///* NIS limit of radar data
+  const double nis_limit_radar_;
+
+  ///* NIS radar over border
+  int nis_radar_above_limit_;
+
+  ///* Number of lidar data sets
+  int num_of_lidar_data_;
+
+  ///* NIS radar over border
+  int nis_lidar_above_limit_;
+
+  ///* NIS limit of lidar data
+  const double nis_limit_lidar_;
+
 };
 
 #endif /* UKF_H */

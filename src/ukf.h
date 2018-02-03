@@ -117,6 +117,12 @@ private:
   ///* Radar measurement covariance
   MatrixXd R_radar_;
 
+  ///* Lidar measurement covariance
+  MatrixXd R_lidar_;
+
+  ///* Lidar measurement matrix
+  MatrixXd H_;
+
 };
 
 #endif /* UKF_H */

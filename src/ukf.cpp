@@ -12,7 +12,7 @@ using std::vector;
  * This is scaffolding, do not modify
  */
 UKF::UKF()
-: use_laser_(false)  // if this is false, laser measurements will be ignored (except during init)
+: use_laser_(true)  // if this is false, laser measurements will be ignored (except during init)
 , use_radar_(true) // if this is false, radar measurements will be ignored (except during init)
 , n_x_(5)
 , n_z_(3)
@@ -38,10 +38,10 @@ UKF::UKF()
   }
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 0.5; //30;
+  std_a_ = 0.4; //30;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 0.5; //30;
+  std_yawdd_ = 0.4; //30;
   
   //DO NOT MODIFY measurement noise values below these are provided by the sensor manufacturer.
   // Laser measurement noise standard deviation position1 in m
@@ -78,6 +78,17 @@ UKF::UKF()
   R_radar_(1,1) = std_radphi_ * std_radphi_;
   R_radar_(2,2) = std_radrd_ * std_radrd_;
   // time_us_ =
+
+  R_lidar_ = MatrixXd(2, 2);
+  R_lidar_.setZero();
+  R_lidar_(0, 0) = std_laspx_ * std_laspx_;
+  R_lidar_(1, 1) = std_laspy_ * std_laspy_;
+
+  H_ = MatrixXd(2, n_x_);
+  H_.setZero();
+  H_(0, 0) = 1;
+  H_(1, 1) = 1;
+
 
   /************* TESTCODE ***************/
 #if 0
@@ -194,12 +205,12 @@ void UKF::ProcessMeasurement(const MeasurementPackage & meas_package) {
 #if 1
     if (meas_package.sensor_type_ == MeasurementPackage::RADAR) {
       // Radar updates
-      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-      UpdateRadar(meas_package);
-//    } else {
-//      // Laser updates
 //      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-//      UpdateLidar(meas_package);
+      UpdateRadar(meas_package);
+    } else {
+      // Laser updates
+//      std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+      UpdateLidar(meas_package);
     }
 #endif
 
@@ -289,37 +300,37 @@ void UKF::Prediction(const double delta_t) {
     const double nju_pddk = x_aug_k(6);
 
 //    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-    VectorXd F_xk(n_x_);
+    VectorXd F_xk1(n_x_);
     // Avoid division by zero
     if (1e-6 < fabs(psidot_k))
     {
         // psi_k_dot is not zero
-        F_xk[0] = v_k/psidot_k * (+sin(psi_k + psidot_k*delta_t) - sin(psi_k));
-        F_xk[1] = v_k/psidot_k * (-cos(psi_k + psidot_k*delta_t) + cos(psi_k));
+        F_xk1[0] = v_k/psidot_k * (+sin(psi_k + psidot_k*delta_t) - sin(psi_k));
+        F_xk1[1] = v_k/psidot_k * (-cos(psi_k + psidot_k*delta_t) + cos(psi_k));
     }
     else
     {
         // psi_k_dot is zero
-        F_xk[0] = v_k * cos(psi_k) * delta_t;
-        F_xk[1] = v_k * sin(psi_k) * delta_t;
+        F_xk1[0] = v_k * cos(psi_k) * delta_t;
+        F_xk1[1] = v_k * sin(psi_k) * delta_t;
     }
-    F_xk[2] = 0;
-    F_xk[3] = psidot_k * delta_t;
-    F_xk[4] = 0;
+    F_xk1[2] = 0;
+    F_xk1[3] = psidot_k * delta_t;
+    F_xk1[4] = 0;
 
 //    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-    VectorXd F_njuk(n_x_);
-    F_njuk[0] = 0.5 * delta_t*delta_t * cos(psi_k) * nju_ak;
-    F_njuk[1] = 0.5 * delta_t*delta_t * sin(psi_k) * nju_ak;
-    F_njuk[2] = delta_t * nju_ak;
-    F_njuk[3] = 0.5 * delta_t*delta_t * nju_pddk;
-    F_njuk[4] = delta_t * nju_pddk;
+    VectorXd F_njuk1(n_x_);
+    F_njuk1[0] = 0.5 * delta_t*delta_t * cos(psi_k) * nju_ak;
+    F_njuk1[1] = 0.5 * delta_t*delta_t * sin(psi_k) * nju_ak;
+    F_njuk1[2] = delta_t * nju_ak;
+    F_njuk1[3] = 0.5 * delta_t*delta_t * nju_pddk;
+    F_njuk1[4] = delta_t * nju_pddk;
 
 //    std::cout << "x_aug_k.transpose() = [" << x_aug_k.transpose() << "]" << std::endl;
-//    std::cout << "F_xk.transpose() = [" << F_xk.transpose() << "]" << std::endl;
-//    std::cout << "F_njuk.transpose() = [" << F_njuk.transpose() << "]" << std::endl;
+//    std::cout << "F_xk1.transpose() = [" << F_xk1.transpose() << "]" << std::endl;
+//    std::cout << "F_njuk1.transpose() = [" << F_njuk1.transpose() << "]" << std::endl;
 //    std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-    Xsig_pred_.col(col) = x_aug_k.head(n_x_) + F_xk + F_njuk;
+    Xsig_pred_.col(col) = x_aug_k.head(n_x_) + F_xk1 + F_njuk1;
   }
 
 //  std::cout << "Xsig_pred_ = [" << std::endl << Xsig_pred_ << "]" << std::endl;
@@ -389,6 +400,31 @@ void UKF::UpdateLidar(const MeasurementPackage & meas_package) {
 
   You'll also need to calculate the lidar NIS.
   */
+
+  const double px = meas_package.raw_measurements_(0);
+  const double py = meas_package.raw_measurements_(1);
+  VectorXd z(2);
+  z << px, py;
+
+//  std::cout << "UpdateLidar: z.transpose() = [" << z.transpose() << "]" << std::endl;
+
+  VectorXd z_pred = H_ * x_;
+  VectorXd y = z - z_pred;
+
+  MatrixXd Ht_ = H_.transpose();
+
+  MatrixXd PHt = P_ * Ht_;
+  MatrixXd S = H_ * PHt + R_lidar_;
+  MatrixXd K = PHt * S.inverse();
+
+  //new estimate
+//  std::cout << "UpdateLidar: old x_.transpose() = [" << x_.transpose() << "]" << std::endl;
+  x_ = x_ + (K * y);
+//  std::cout << "UpdateLidar: new x_.transpose() = [" << x_.transpose() << "]" << std::endl;
+
+//  std::cout << "UpdateLidar: old P_ = [" <<std::endl << P_ << "]" << std::endl;
+  P_ = (MatrixXd::Identity(n_x_, n_x_) - K * H_) * P_;
+//  std::cout << "UpdateLidar: new P_ = [" <<std::endl << P_ << "]" << std::endl;
 }
 
 /**
@@ -454,7 +490,7 @@ void UKF::UpdateRadar(const MeasurementPackage & meas_package) {
 
 //  std::cout << "S+R_radar_ = [" << std::endl << S << "]" << std::endl;
 
-  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
+//  std::cout << __FILE__ << ":" << __LINE__ << std::endl;
 
   // ******* new test data ******
 #if 0

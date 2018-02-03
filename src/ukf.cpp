@@ -176,8 +176,14 @@ void UKF::ProcessMeasurement(const MeasurementPackage & meas_package) {
     std::cout << "x_.transpose() = [" << x_.transpose() << "]"<< std::endl;
     std::cout << "P_ = [" << std::endl << P_ << "]" << std::endl;
 
-    const double lidar_nis_over_limit = double(nis_lidar_above_limit_) / double(num_of_lidar_data_);
-    const double radar_nis_over_limit = double(nis_radar_above_limit_) / double(num_of_radar_data_);
+    double lidar_nis_over_limit = 0;
+    double radar_nis_over_limit = 0;
+    if (use_laser_) {
+      lidar_nis_over_limit = double(nis_lidar_above_limit_) / double(num_of_lidar_data_);
+    }
+    if (use_radar_) {
+      radar_nis_over_limit = double(nis_radar_above_limit_) / double(num_of_radar_data_);
+    }
     std::cout << "NIS over limit"
               << " - Lidar= " << lidar_nis_over_limit * 100. << "%"
               << " - Radar= " << radar_nis_over_limit * 100. << "%"
@@ -366,14 +372,12 @@ void UKF::UpdateRadar(const MeasurementPackage & meas_package) {
   }
 
   // Measurement covariance matrix S
-  MatrixXd S = MatrixXd::Zero(n_z_, n_z_);
+  MatrixXd S = R_radar_;
   for (int i = 0; n_sigma_points_ > i; i++)
   {
     VectorXd z_diff = Zsig.col(i) - z_pred;
     S += weights_(i) * z_diff * z_diff.transpose();
   }
-
-  S += R_radar_;
 
   // Cross correlation matrix Tc
   MatrixXd Tc = MatrixXd::Zero(n_x_, n_z_);
@@ -414,8 +418,14 @@ void UKF::UpdateRadar(const MeasurementPackage & meas_package) {
 
   //update state mean and covariance matrix
   VectorXd z_upd = z - z_pred;
-  if (+M_PI < z_upd(1)) z_upd(1) -= 2.0*M_PI;
-  if (-M_PI > z_upd(1)) z_upd(1) += 2.0*M_PI;
+  while (+M_PI < z_upd(1)) {
+    std::cout << +M_PI << " < z_upd(1)=" << z_upd(1) << std::endl;
+    z_upd(1) -= 2.0*M_PI;
+  }
+  while (-M_PI > z_upd(1)) {
+    std::cout << -M_PI << " > z_upd(1)=" << z_upd(1) << std::endl;
+    z_upd(1) += 2.0*M_PI;
+  }
 
   num_of_radar_data_++;
   double eps = z_upd.transpose() * S.inverse() * z_upd;
